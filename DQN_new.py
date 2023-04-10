@@ -28,7 +28,7 @@ import sys
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class DQN:
-    def __init__(self, high_agent=1, max_vnr_nodes=8, n_sub_ftrs=6, n_vnr_ftrs=3, batch_size=128, gamma=0.99, eps_start=0.9, eps_end=0.05, eps_decay=1000, tau=0.005, lr=1e-4) -> None:
+    def __init__(self, high_agent=1, max_vnr_nodes=10, n_sub_ftrs=6, n_vnr_ftrs=3, batch_size=128, gamma=0.99, eps_start=0.9, eps_end=0.05, eps_decay=1000, tau=0.005, lr=1e-4) -> None:
         self.high_agent = high_agent
         self.batch_size = batch_size
         self.gamma = gamma
@@ -43,15 +43,18 @@ class DQN:
         self.n_vnr_ftrs = n_vnr_ftrs
         self.max_episodes = 10000
         self.max_time_steps_per_episode = 20000
+        self.rew = 0.0
 
         num_sub_graphs = 3
         num_nodes_sub = 20
-        num_features_of_ffnn = (num_nodes_sub * num_sub_graphs) + self.max_vnr_nodes
+        num_features_of_ffnn_high = (num_nodes_sub * num_sub_graphs) + self.max_vnr_nodes
+        num_features_of_ffnn_low = num_nodes_sub + self.n_vnr_ftrs
         g1_h_ftrs = 2
         g1_o_ftrs = 1
         g2_h_ftrs = 2
         g2_o_ftrs = 1
         ff_hidden_size = 128
+
         n_classes_high = 3
         n_classes_low = 20
 
@@ -67,19 +70,18 @@ class DQN:
             [2,10], [10,20], [10,20], [15,20]
         ]
 
-        self.graph_gen = GraphGen(sub_nodes=num_nodes_sub, max_vnr_nodes=self.max_vnr_nodes, prob_of_link=0.1, sub_values=values_for_subs, vnr_values=values_for_vnrs)
-        self.sub_graphs_original = self.create_subs()
-
         if self.high_agent:
+            self.graph_gen = GraphGen(sub_nodes=num_nodes_sub, max_vnr_nodes=self.max_vnr_nodes, prob_of_link=0.1, sub_values=values_for_subs, vnr_values=values_for_vnrs)
+            self.sub_graphs_original = self.create_subs()
             self.env = High_level_env(sub_graphs=self.sub_graphs_original)#self.max_vnr_nodes, self.n_vnr_ftrs, self.n_sub_ftrs)
-            self.policy_net = Higher_network(self.n_sub_ftrs, g1_h_ftrs, g1_o_ftrs, self.n_vnr_ftrs, g2_h_ftrs, g2_o_ftrs, ff_hidden_size, n_classes_high, num_features_of_ffnn)
-            self.target_net = Higher_network(self.n_sub_ftrs, g1_h_ftrs, g1_o_ftrs, self.n_vnr_ftrs, g2_h_ftrs, g2_o_ftrs, ff_hidden_size, n_classes_high, num_features_of_ffnn)
+            self.policy_net = Higher_network(self.n_sub_ftrs, g1_h_ftrs, g1_o_ftrs, self.n_vnr_ftrs, g2_h_ftrs, g2_o_ftrs, ff_hidden_size, n_classes_high, num_features_of_ffnn_high)
+            self.target_net = Higher_network(self.n_sub_ftrs, g1_h_ftrs, g1_o_ftrs, self.n_vnr_ftrs, g2_h_ftrs, g2_o_ftrs, ff_hidden_size, n_classes_high, num_features_of_ffnn_high)
             self.embedded_vnr_mappings = []
             self.map_skel = {'sub':None, 'vnr_node_ind':[], 'sub_node_ind':[], 'cpu_mem':[], 'link_ind':[], 'bw':[], 'paths':[], 'dep_t':None}           
         else:
             self.env = Low_level_env()
-            self.policy_net = Lower_network(self.n_sub_ftrs, g1_h_ftrs, g1_o_ftrs, ff_hidden_size, n_classes_low, num_features_of_ffnn)
-            self.target_net = Lower_network(self.n_sub_ftrs, g1_h_ftrs, g1_o_ftrs, ff_hidden_size, n_classes_low, num_features_of_ffnn)
+            self.policy_net = Lower_network(self.n_sub_ftrs, g1_h_ftrs, g1_o_ftrs, ff_hidden_size, n_classes_low, num_features_of_ffnn_low)
+            self.target_net = Lower_network(self.n_sub_ftrs, g1_h_ftrs, g1_o_ftrs, ff_hidden_size, n_classes_low, num_features_of_ffnn_low)
         
         self.target_net.load_state_dict(self.policy_net.state_dict())
         self.optimizer = optim.AdamW(self.policy_net.parameters(), lr=self.learning_rate, amsgrad=True)
@@ -148,7 +150,8 @@ class DQN:
 
         return revenues_, costs_
     
-    def select_action(self, state):
+    # the pair of sub_data and vnr_data is the state for both the high level and low level agent
+    def select_action(self, sub_data, vnr_data):
         sample = random.random()
         eps_threshold = self.eps_end + (self.eps_start - self.eps_end) * \
             math.exp(-1. * self.steps_done / self.eps_decay)
@@ -158,7 +161,7 @@ class DQN:
                 # t.max(1) will return the largest column value of each row.
                 # second column on max result is index of where max element was
                 # found, so we pick action with the larger expected reward.
-                return self.policy_net(state).max(1)[1].view(1, 1)
+                return self.policy_net(sub_data, vnr_data).max(1)[1].view(1, 1)
         else:
             return torch.tensor([[self.env.sample_action()]], device=device, dtype=torch.long)
         
@@ -186,7 +189,6 @@ class DQN:
         cnt_ = 1
         prev_option = None
         for step in range(10):
-            print("I am here")
 
             if step >= self.max_time_steps_per_episode:
                 break
@@ -203,20 +205,129 @@ class DQN:
                 cost = 0
                 rev_cost_ratio_ = None
 
-                high_option = self.select_action([state_high[:-1], state_high[-1]])
+                high_option_tensor = self.select_action(state_high[:-1], state_high[-1])
+                # print(high_option_tensor)
+                high_option = high_option_tensor.detach().item()
 
-                print(high_option)
+                sub = self.env.choose_option(high_option)
+
+                prev_vnr = copy.deepcopy(vnr)
+                if prev_option == high_option:
+                    cnt_ += 1
+                else:
+                    cnt_ = 1
+                prev_option = copy.copy(high_option)
+                
+                # the low level agent is used by the high level agent here
+                node_embedded, node_mappings, cumulative_reward = self.low_dqn.low_loop(sub, high_option, vnr, map_skel=copy.deepcopy(self.map_skel), step_= step)
+                
+                ######################## from here to be continued
+
 
                 arr_t = self.time_sim.ret_arr_time()
 
 
+    def low_loop(self, sub_, high_opt, vnr_, map_skel=None, step_=None):
+        state_low = self.env.reset(sub=sub_, sub_ind=high_opt, vnr=vnr_, map_skel=map_skel)
+        node_embedded = False
+        prev_low_actions = []
+        embed_cnt = 0
+
+        for x in range(len(vnr_['nodes'])):
+            low_action = None
+            while low_action in prev_low_actions or low_action == None:
+                low_action_tensor = self.select_action(state_low[0], state_low[1])
+                low_action = low_action_tensor.detach().item()
+            prev_low_actions.append(low_action)
+            
+
+            # the next state can also be None so be careful
+            next_state_low, reward_low, done_low, embedded = self.env.step(low_action, ind_vnr=x)
+
+            reward_low_tensor = torch.tensor([reward_low], device=device)
+
+            if done_low:
+                next_state_low = None
+            
+            # in the original code, the state is a 2D tensor so that it can easily be concatenated
+            # into a batch of 2D tensor states but in our case, our states are not tensors but data objects so, 
+            # we have to handle the batch of transitions a little differently
+            # maybe concatenate all the states into a list and then process them one by one 
+            # and then concatenate the ouput tensor into a 2D tensor of Q values for each state 
+            self.memory.push(state_low, low_action_tensor, next_state_low, reward_low_tensor)
+
+            self.rew += reward_low
+            self.rew_buffer.append(self.rew)
+
+            state_low = next_state_low
+            if embedded:
+                embed_cnt += 1
+
+            self.optimize_model()
+        
+        node_embedded = True if len(vnr_['nodes']) == embed_cnt else False
+        cumulative_reward = self.env.get_total_rew()
+        if node_embedded:
+            map_skel = self.env.get_mappings()
+        
+        return node_embedded, map_skel, cumulative_reward
+
+    def optimize_model(self):
+        if len(self.memory) < self.batch_size:
+            return
+        transitions = self.memory.sample(self.batch_size)
+        batch = self.memory.Transition(*zip(*transitions))
+
+        non_final_mask = torch.tensor(tuple(map(lambda s : s is not None , batch.next_state)), device=device, dtype=torch.bool)
+        non_final_next_states = [s for s in batch.next_state if s is not None]
+
+        # this is only for a small batch size, for large batch size this error wont come
+        if len(non_final_next_states) < 1:
+            return
+
+        state_batch = [s for s in batch.state]
+        action_batch = torch.cat(batch.action)
+        reward_batch = torch.cat(batch.reward)
+
+        q_values = []
+        for x in range(self.batch_size):
+            if self.high_agent:
+                q_val = self.policy_net(state_batch[x][:-1], state_batch[x][-1])
+            else:
+                q_val = self.policy_net(state_batch[x][0], state_batch[x][1])
+            q_values.append(q_val)
 
 
+        q_values = torch.cat(q_values)
+        state_action_values = q_values.gather(1, action_batch)
 
+        next_state_values = torch.zeros(self.batch_size, device=device)
+        with torch.no_grad():
+            next_q_values = []
+            for x in range(len(non_final_next_states)):
+                if self.high_agent:
+                    next_q_val = self.target_net(non_final_next_states[x][:-1], non_final_next_states[x][-1])
+                else:
+                    next_q_val = self.target_net(non_final_next_states[x][0], non_final_next_states[x][1])
+                next_q_values.append(next_q_val)
+            next_q_values = torch.cat(next_q_values)
+            next_state_values[non_final_mask] = next_q_values.max(1)[0]
+        expected_state_action_values = (next_state_values * self.gamma) + reward_batch
 
+        criterion = nn.SmoothL1Loss()
+        loss = criterion(state_action_values, expected_state_action_values.unsqueeze(1))
+
+        # Optimize the model
+        self.optimizer.zero_grad()
+        loss.backward()
+        # In-place gradient clipping
+        torch.nn.utils.clip_grad_value_(self.policy_net.parameters(), 100)
+        self.optimizer.step()
 
 dqn = DQN()
+low_dqn = DQN(high_agent=0)
 dqn.create_subs()
+dqn.set_low_dqn(low_dqn)
 dqn.high_loop()
 
         

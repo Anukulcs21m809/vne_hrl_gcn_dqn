@@ -86,7 +86,7 @@ class High_level_env:
         # replace the substrate that has been changed by the low agent
         self.current_sub_state[option] = sub
         done = True if self.not_embed_count > 5 else False
-        next_state = self.encode_graphs(vnr) if not done else None
+        next_state = self.encode_graphs(vnr)
         
         return next_state, reward, done
     

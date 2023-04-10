@@ -10,12 +10,11 @@ import csv
 import math
 
 sys.path.insert(1, "../helpers")
-sys.path.insert(2, "../data")
 from helpers.data_feature_gen import Featurizer
 
 class Low_level_env:
     def __init__(self, ) -> None:
-        df = pd.read_csv('../data/sub_graphs_original.csv')
+        df = pd.read_csv('data/sub_graphs_original.csv')
         self.curr_sub = json.loads(df.iloc[1][0])
     
     @property
@@ -39,7 +38,7 @@ class Low_level_env:
     def encode_graphs(self, sub_graph, vnr_graph, initial=False, ind=None):
         # only encode the sub_graph and just concatenate the current node features of vnr onto the encoding 
         sub_data_obj = Featurizer.make_data_obj(sub_graph)
-        vnr_data_obj = Featurizer.make_data_obj(vnr_graph, sub_=0)
+        vnr_data_obj = Featurizer.make_data_obj(vnr_graph, sub=0)
         if initial == True and ind is None:
             ind = 0
         final_inp = [sub_data_obj, vnr_data_obj.x[ind]]
@@ -79,8 +78,7 @@ class Low_level_env:
         if not done:
             ind_vnr += 1
         # I have put the next states as None in both low and high models , so take care of that
-        next_state = self.encode_graphs(temp_sub, self.curr_vnr, ind = ind_vnr) if not done else None
-
+        next_state = self.encode_graphs(temp_sub, self.curr_vnr, ind = ind_vnr)
         return next_state, reward, done, embeddable
 
     def temp_sub_change(self):

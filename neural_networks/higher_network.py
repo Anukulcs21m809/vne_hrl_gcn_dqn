@@ -36,6 +36,7 @@ class Higher_network(nn.Module):
     def __init__(self, g1_in_features, g1_hidden_features, g1_out_features,
                  g2_in_features, g2_hidden_features, g2_out_features, ff_hidden_size, num_classes, num_features_of_ffnn):
         super(Higher_network, self).__init__()
+        self.num_features_ffnn = num_features_of_ffnn
         self.g1_layer1 = GCNLayer(g1_in_features, g1_hidden_features)
         self.g1_layer2 = GCNLayer(g1_hidden_features, g1_out_features)
         self.g2_layer1 = GCNLayer(g2_in_features, g2_hidden_features)
@@ -66,7 +67,7 @@ class Higher_network(nn.Module):
         x = torch.cat((g1_x, g2_x), dim=0)
         x = x.flatten()
         pad_seq = (0, 1)
-        while x.shape[0] < 68:
+        while x.shape[0] < self.num_features_ffnn:
             x = fn.pad(x, pad_seq, "constant", 0)
 
         x = x.unsqueeze(0)
