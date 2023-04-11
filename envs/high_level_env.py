@@ -16,10 +16,11 @@ sys.path.insert(1, "../helpers")
 from helpers.data_feature_gen import Featurizer
 
 class High_level_env:
-    def __init__(self, sub_graphs=None): #,max_vnr_nodes=None, vnr_in_ftr=None, sub_in_ftr=None) -> None:
+    def __init__(self, sub_graphs=None, max_running_time=None): #,max_vnr_nodes=None, vnr_in_ftr=None, sub_in_ftr=None) -> None:
         
         # this will always store the original state of the substrate graphs
         self.sub_graphs = sub_graphs
+        self.max_running_time = max_running_time
 
         # these sub graphs have to be instantiated at the DQN file
         # df = pd.read_csv('../data/sub_graphs_original.csv').reset_index()
@@ -53,18 +54,21 @@ class High_level_env:
         Returns: the observation of the initial state
         Reset the environment to the initial state so that a new episode (independent of the previous ones) may start
         '''
-        self.not_embed_count = 0
+
         # resets the graphs to the original substrate graphs
         self.current_sub_state = copy.copy(self.sub_graphs)
         # incoming vnr is passed from the other file
         init_state = self.encode_graphs(vnr)
         return init_state
     
-    def get_reward(self, link_embedded, mapp, vnr, option, cnt):
+    ##################### have to change this reward function #######################
+
+
+    def get_reward(self, link_embedded, mapp, vnr, option, cnt, rev_to_cost_ratio=None):
         mult = 1 if link_embedded else -1
-        scaling_factor = 1
+        scaling_factor = 0.05
         const_ = (1 / (math.pow((cnt - 1), 2) + 1))
-        rew_ = 1.0
+        rew_ = 0.0
         if link_embedded and mapp['link_ind'] is not None:
             for link in mapp['link_ind']:
                 total_util = 0.0
@@ -72,20 +76,23 @@ class High_level_env:
                     sub_link = self.current_sub_state[option]['links'][ind_]
                     total_util += (1 - (sub_link['bw'] / sub_link['band_max']))
                 rew_ += (total_util / (len(link) + 1))
+        # else:
+        #     for link in vnr['links']:
+        #         rew_ += link['bw']
+        #     rew_ = rew_ * scaling_factor
         else:
-            for link in vnr['links']:
-                rew_ += link['bw']
-            rew_ = (1 / rew_) * scaling_factor
+            rew_ = -1.0
         return (mult * const_ * rew_)
     
-    def step(self, option, sub=None, vnr=None, link_embed=None, mapp=None, prev_vnr=None, cnt=None, rev_cost_ratio=None):
+    #############################################################
+    
+    def step(self, option, sub=None, vnr=None, link_embed=None, mapp=None, prev_vnr=None, cnt=None, curr_time_step=None, rev_cost_ratio=None): #not_embed_count=None):
         
-        self.not_embed_count += 1
         reward = self.get_reward(link_embed, mapp, prev_vnr, option, cnt)
         
         # replace the substrate that has been changed by the low agent
         self.current_sub_state[option] = sub
-        done = True if self.not_embed_count > 5 else False
+        done = True if curr_time_step > self.max_running_time else False
         next_state = self.encode_graphs(vnr)
         
         return next_state, reward, done

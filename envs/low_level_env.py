@@ -29,11 +29,17 @@ class Low_level_env:
         self.curr_vnr = vnr_
         self.curr_map = mapp
 
+
+    ##################### have to change the reward function ###################
+
     def get_reward(self, embeddable, sub_node):
         mult = 1 if embeddable else -1
-        scaling_factor = 10
+        scaling_factor = 1
         unutil = sub_node['cpu'] / sub_node['cpu_max']
+        print(unutil)
         return (mult * (1 - unutil) * scaling_factor)
+    
+    #############################################################
     
     def encode_graphs(self, sub_graph, vnr_graph, initial=False, ind=None):
         # only encode the sub_graph and just concatenate the current node features of vnr onto the encoding 
@@ -78,7 +84,7 @@ class Low_level_env:
         if not done:
             ind_vnr += 1
         # I have put the next states as None in both low and high models , so take care of that
-        next_state = self.encode_graphs(temp_sub, self.curr_vnr, ind = ind_vnr)
+        next_state = self.encode_graphs(temp_sub, self.curr_vnr, ind=ind_vnr)
         return next_state, reward, done, embeddable
 
     def temp_sub_change(self):
@@ -94,6 +100,6 @@ class Low_level_env:
         return self.curr_map
     
     def get_total_rew(self):
-        return self.cum_reward
+        return self.cum_reward / len(self.curr_vnr['nodes'])
 
     
