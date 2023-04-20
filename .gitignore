@@ -3,5 +3,7 @@ pseudocode.txt
 test.py
 __pycache__
 learning
-data/sub_graphs_original.csv
+sub_graphs_original.csv
 .gitignore
+high_agent.pth
+low_agent.pth

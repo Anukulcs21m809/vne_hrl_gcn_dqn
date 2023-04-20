@@ -1,0 +1,6 @@
+2023-04-20 17:42:03 INFO Running runs: []
+2023-04-20 17:42:04 INFO Agent received command: run
+2023-04-20 17:42:04 INFO Agent starting run with config:
+	gamma: 0.9802249083991836
+2023-04-20 17:42:04 INFO About to run command: /usr/bin/env python DQN_new.py --gamma=0.9802249083991836
+2023-04-20 17:42:09 INFO Running runs: ['f9r0j7fm']

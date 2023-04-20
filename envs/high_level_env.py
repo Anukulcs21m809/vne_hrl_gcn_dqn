@@ -16,11 +16,12 @@ sys.path.insert(1, "../helpers")
 from helpers.data_feature_gen import Featurizer
 
 class High_level_env:
-    def __init__(self, sub_graphs=None, max_running_time=None): #,max_vnr_nodes=None, vnr_in_ftr=None, sub_in_ftr=None) -> None:
+    def __init__(self, sub_graphs=None, max_running_time=None, max_not_embed_cnt=None): #,max_vnr_nodes=None, vnr_in_ftr=None, sub_in_ftr=None) -> None:
         
         # this will always store the original state of the substrate graphs
         self.sub_graphs = sub_graphs
         self.max_running_time = max_running_time
+        self.max_not_embed_cnt = max_not_embed_cnt
 
         # these sub graphs have to be instantiated at the DQN file
         # df = pd.read_csv('../data/sub_graphs_original.csv').reset_index()
@@ -61,38 +62,56 @@ class High_level_env:
         init_state = self.encode_graphs(vnr)
         return init_state
     
-    ##################### have to change this reward function #######################
+    ############################################
 
 
-    def get_reward(self, link_embedded, mapp, vnr, option, cnt, rev_to_cost_ratio=None):
-        mult = 1 if link_embedded else -1
-        scaling_factor = 0.05
-        const_ = (1 / (math.pow((cnt - 1), 2) + 1))
-        rew_ = 0.0
-        if link_embedded and mapp['link_ind'] is not None:
+    def get_reward(self, link_embedded, mapp, vnr, option, cum_rew, cnt):
+        r_h_e = 100 if link_embedded else -100
+        if mapp == None or len(mapp['link_ind']) < 1:
+            r_h_u = 1
+        else:
+            r_h_u = 0
             for link in mapp['link_ind']:
-                total_util = 0.0
+                avg_resource = 0
                 for ind_ in link:
                     sub_link = self.current_sub_state[option]['links'][ind_]
-                    total_util += (1 - (sub_link['bw'] / sub_link['band_max']))
-                rew_ += (total_util / (len(link) + 1))
-        # else:
-        #     for link in vnr['links']:
-        #         rew_ += link['bw']
-        #     rew_ = rew_ * scaling_factor
+                    avg_resource += (sub_link['bw']/ sub_link['band_max'])
+                r_h_u += (avg_resource / len(link))
+            r_h_u /= len(mapp['link_ind'])
+        
+        if not link_embedded:
+            r_h_rc = 1 # this means that we are making the reward more negative
         else:
-            rew_ = -1.0
-        return (mult * const_ * rew_)
-    
+            r_h_rc = 0
+            rev_change = 0
+            cost_change = 0
+            for cpu_mem in mapp['cpu_mem']:
+                rev_change = cpu_mem[0] + cpu_mem[1]
+            cost_change = copy.deepcopy(rev_change)
+            for u in range(len(mapp['paths'])):
+                rev_change += mapp['bw'][u]
+                cost_change += (mapp['bw'][u] * (len(mapp['paths'][u]) - 1))
+            r_h_rc = (rev_change / cost_change)
+        
+        r_c = 1 / (math.pow((cnt - 1), 2) + 1)
+        r_h_l = cum_rew / len(vnr['nodes'])
+
+        final_rew = ((r_h_e * r_h_u * r_h_rc) + r_h_l) * r_c
+        # print(final_rew)
+        # print(link_embedded)
+        return final_rew 
+        
+                
     #############################################################
     
-    def step(self, option, sub=None, vnr=None, link_embed=None, mapp=None, prev_vnr=None, cnt=None, curr_time_step=None, rev_cost_ratio=None): #not_embed_count=None):
+    def step(self, option, sub=None, vnr=None, link_embed=None, mapp=None, prev_vnr=None, curr_time_step=None, cum_rew=None, cnt_=None, not_embed_cnt=None): #not_embed_count=None):
         
-        reward = self.get_reward(link_embed, mapp, prev_vnr, option, cnt)
+        reward = self.get_reward(link_embed, mapp, prev_vnr, option, cum_rew, cnt_)
         
         # replace the substrate that has been changed by the low agent
         self.current_sub_state[option] = sub
-        done = True if curr_time_step > self.max_running_time else False
+        # done = True if curr_time_step > self.max_running_time else False
+        done = True if not_embed_cnt > self.max_not_embed_cnt else False
         next_state = self.encode_graphs(vnr)
         
         return next_state, reward, done

@@ -23,8 +23,8 @@ import numpy as np
 
 class Time_Sim:
     def __init__(self) -> None:
-        self.MU = 7 # mean arrival rate
-        self.TAU = 0.3
+        self.MU = 5 # mean arrival rate
+        self.TAU = 0.1
         self.arrival_time = 0
     
     def ret_arr_time(self):

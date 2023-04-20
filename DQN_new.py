@@ -26,12 +26,13 @@ import sys
 # sys.path.insert(1, "../data")
 # sys.path.insert(2, '../envs')
 # sys.path.insert(3, '../helpers')
-# sys.path.insert(4, '../models')
+# sys.path.insert(1, '../models')
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+wandb.init()
 
 class DQN:
-    def __init__(self, high_agent=1, max_vnr_nodes=10, n_sub_ftrs=6, n_vnr_ftrs=3, batch_size=128, gamma=0.99, eps_start=0.9, eps_end=0.05, eps_decay=1000, tau=0.005, lr=1e-4) -> None:
+    def __init__(self, high_agent=1, max_vnr_nodes=10, n_sub_ftrs=6, n_vnr_ftrs=3, batch_size=128, gamma=0.99, eps_start=0.95, eps_end=0.05, eps_decay=1000, tau=0.005, lr=1e-4) -> None:
         self.high_agent = high_agent
         self.batch_size = batch_size
         self.gamma = gamma
@@ -73,12 +74,13 @@ class DQN:
             [2,10], [10,20], [10,20], [15,20]
         ]
 
-        max_running_time_high_agent = 300
+        max_running_time_high_agent = 2000
+        max_not_embedded_threshold = 100 # this number cannot be very low as the substrates might be empty and it also cannot be very high because the equilibrium is already reached 
 
         if self.high_agent:
             self.graph_gen = GraphGen(sub_nodes=num_nodes_sub, max_vnr_nodes=self.max_vnr_nodes, prob_of_link=0.1, sub_values=values_for_subs, vnr_values=values_for_vnrs)
             self.sub_graphs_original = self.create_subs()
-            self.env = High_level_env(sub_graphs=self.sub_graphs_original, max_running_time=max_running_time_high_agent) #self.max_vnr_nodes, self.n_vnr_ftrs, self.n_sub_ftrs)
+            self.env = High_level_env(sub_graphs=self.sub_graphs_original, max_running_time=max_running_time_high_agent, max_not_embed_cnt=max_not_embedded_threshold) #self.max_vnr_nodes, self.n_vnr_ftrs, self.n_sub_ftrs)
             self.policy_net = Higher_network(self.n_sub_ftrs, g1_h_ftrs, g1_o_ftrs, self.n_vnr_ftrs, g2_h_ftrs, g2_o_ftrs, ff_hidden_size, n_classes_high, num_features_of_ffnn_high)
             self.target_net = Higher_network(self.n_sub_ftrs, g1_h_ftrs, g1_o_ftrs, self.n_vnr_ftrs, g2_h_ftrs, g2_o_ftrs, ff_hidden_size, n_classes_high, num_features_of_ffnn_high)
             self.map_skel = {'sub':None, 'vnr_node_ind':[], 'sub_node_ind':[], 'cpu_mem':[], 'link_ind':[], 'bw':[], 'paths':[], 'dep_t':None}           
@@ -91,10 +93,7 @@ class DQN:
         self.optimizer = optim.AdamW(self.policy_net.parameters(), lr=self.learning_rate, amsgrad=True)
         self.memory = ReplayMemory(10000)
     
-        self.rew_buffer = deque([0.0], maxlen=10000)
         self.time_sim = Time_Sim()
-
-        self.steps_done = 0 
 
     # only use this function if we want to change the substrate graphs
     def create_subs(self):
@@ -173,16 +172,17 @@ class DQN:
         # the rnd vnr must be a json object which is passed to reset
         rnd_vnr = self.get_rnd_vnr()
         initial = True
+        self.steps_done = 0 
         # high level state is given by the environement as [sub_1_data_obj, sub_2_data_obj, sub_3_data_obj, vnr_data_obj]
         # but while passing to the model, we need oto give it as ([sub_1_data_obj, sub_2_data_obj, sub_3_data_obj] , vnr_data_obj)
         state_high = self.env.reset(rnd_vnr)
         vnr = None
         self.time_sim.reset()
         arr_t = self.time_sim.ret_arr_time()
+        self.rew_buffer = deque([0.0], maxlen=10000)
         cnt_ = 1
         prev_option = None
         self.embedded_vnr_mappings = []
-        self.rew_buffer = deque([0.0], maxlen=1000)
         not_embed_count = 0
         ######################
         x_ = []
@@ -192,6 +192,9 @@ class DQN:
         revenues_ = [0, 0, 0]
         costs_ = [0, 0, 0]
         ######################
+
+        self.low_dqn.set_low_params()
+
         for step in count():
 
             if step >= self.max_time_steps_per_episode:
@@ -243,7 +246,7 @@ class DQN:
                         # for the revenue and cost calculation
                         for cpu_mem in all_mappings['cpu_mem']:
                             revenue = cpu_mem[0] + cpu_mem[1]
-                            cost = copy.deepcopy(revenue)
+                        cost = copy.deepcopy(revenue)
                         for u in range(len(all_mappings['paths'])):
                             revenue += all_mappings['bw'][u]
                             cost += (all_mappings['bw'][u] * (len(all_mappings['paths'][u]) - 1))
@@ -258,15 +261,16 @@ class DQN:
                 
                 vnr = self.get_rnd_vnr()
                 # the state is [s1_data_obj, s2_data_obj, s3_data_obj, vnr_data_obj]
-                next_state_high, reward_high, done_high = self.env.step(high_option, sub=sub, vnr=vnr, link_embed=link_embedded, mapp=all_mappings, prev_vnr=prev_vnr, cnt=cnt_, rev_cost_ratio=rev_cost_ratio_, curr_time_step=step)
-                
+                ##############################################
+                next_state_high, reward_high, done_high = self.env.step(high_option, sub=sub, vnr=vnr, link_embed=link_embedded, 
+                                                                        mapp=all_mappings, prev_vnr=prev_vnr, curr_time_step=step,
+                                                                        cum_rew=cumulative_reward, cnt_=cnt_, not_embed_cnt=not_embed_count)
+                ###############################################
                 
                 if done_high:
                     next_state_high = None
-                # print(link_embedded)
-                # print(reward_high)
+                
                 reward_high += cumulative_reward
-                # print(reward_high)
                 reward_high_tensor = torch.tensor([reward_high], device=device)
 
                 self.memory.push(state_high, high_option_tensor, next_state_high, reward_high_tensor)
@@ -276,24 +280,29 @@ class DQN:
                 self.optimize_model()
 
                 if done_high:
+                    # print(n_vnrs_embedded)
 
-                    # tot_rev_ratio = np.mean([0 if c == 0 else r / c for r, c in zip(revenues_, costs_)])
+                    tot_rev_ratio = np.mean([0 if c == 0 else r / c for r, c in zip(revenues_, costs_)])
                             
-                    # node_util, link_util = self.env.get_utilization()
-                    # avg_node_util = np.mean(node_util, axis=1)
-                    # avg_link_util = [mean(util) for util in link_util]
-                    # wandb.log({'acceptance_rate': (n_vnrs_embedded/n_vnrs_generated), 'reward': np.mean(self.rew_buffer), 'avg_rev_cost_ratio' : tot_rev_ratio, 'avg_node_util_1' : avg_node_util[0], 'avg_node_util_2' : avg_node_util[1], 'avg_node_util_3' : avg_node_util[2], 'avg_link_util_1' : avg_link_util[0], 'avg_link_util_2' : avg_link_util[1],
-                    #             'avg_link_util_3' : avg_link_util[2],})
+                    node_util, link_util = self.env.get_utilization()
+                    avg_node_util = np.mean(node_util, axis=1)
+                    avg_link_util = [mean(util) for util in link_util]
+                    wandb.log({'acceptance_rate': (n_vnrs_embedded/n_vnrs_generated), 'reward': np.mean(self.rew_buffer), 'avg_rev_cost_ratio' : tot_rev_ratio, 'avg_node_util_1' : avg_node_util[0], 'avg_node_util_2' : avg_node_util[1], 'avg_node_util_3' : avg_node_util[2], 'avg_link_util_1' : avg_link_util[0], 'avg_link_util_2' : avg_link_util[1],
+                                'avg_link_util_3' : avg_link_util[2],})
                     break
                 
                 arr_t = self.time_sim.ret_arr_time()
-                # print(step)
-        # print(step)
-        # print(mean(self.rew_buffer))
-        # print('\n')
         return mean(self.rew_buffer)
         
         # save both the trained models
+    
+    def save_models(self):
+        torch.save(self.policy_net.state_dict(), 'models/high_agent.pth')
+        torch.save(self.low_dqn.policy_net.state_dict(), 'models/low_agent.pth')
+
+    def set_low_params(self):
+        self.steps_done = 0 
+        self.rew_buffer = deque([0.0], maxlen=10000)
 
 
     def low_loop(self, sub_, high_opt, vnr_, map_skel=None, step_=None):
@@ -404,14 +413,16 @@ class DQN:
         self.target_net.load_state_dict(target_net_state_dict)
 
 
-num_episodes = 1000
+num_episodes = 2000
 dqn = DQN()
-low_dqn = DQN(high_agent=0)
+low_dqn = DQN(high_agent = 0)
 dqn.create_subs()
 dqn.set_low_dqn(low_dqn)
 for x in range(num_episodes):
-    dqn.high_loop()
-
+    rew = dqn.high_loop()
+    print(rew)
+    print('\n')
+dqn.save_models()
         
         
     

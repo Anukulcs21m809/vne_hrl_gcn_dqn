@@ -1,0 +1,4 @@
+wandb_version: 1
+
+gamma:
+  value: 0.9802249083991836

@@ -1,0 +1,16 @@
+program: DQN_new.py
+method: bayes
+metric:
+  name: acceptance_rate
+  goal: maximize
+metric:
+  name: reward
+  goal: maximize
+metric:
+  name: avg_rev_cost_ratio
+  goal: maximize
+
+parameters:
+  gamma:
+    min: 0.98
+    max: 0.99
