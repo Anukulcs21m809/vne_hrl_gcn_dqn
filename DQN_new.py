@@ -26,13 +26,13 @@ import sys
 # sys.path.insert(1, "../data")
 # sys.path.insert(2, '../envs')
 # sys.path.insert(3, '../helpers')
-# sys.path.insert(1, '../models')
+sys.path.insert(1, '../models')
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 wandb.init()
 
 class DQN:
-    def __init__(self, high_agent=1, max_vnr_nodes=10, n_sub_ftrs=6, n_vnr_ftrs=3, batch_size=128, gamma=0.99, eps_start=0.95, eps_end=0.05, eps_decay=1000, tau=0.005, lr=1e-4) -> None:
+    def __init__(self, high_agent=1, max_vnr_nodes=10, n_sub_ftrs=6, n_vnr_ftrs=3, batch_size=256, gamma=0.99, eps_start=0.95, eps_end=0.05, eps_decay=1000, tau=0.05, lr=1e-3) -> None:
         self.high_agent = high_agent
         self.batch_size = batch_size
         self.gamma = gamma
@@ -92,7 +92,10 @@ class DQN:
         self.target_net.load_state_dict(self.policy_net.state_dict())
         self.optimizer = optim.AdamW(self.policy_net.parameters(), lr=self.learning_rate, amsgrad=True)
         self.memory = ReplayMemory(10000)
-    
+
+        self.rew_buffer = deque([0.0], maxlen=10000)
+        self.steps_done = 0
+
         self.time_sim = Time_Sim()
 
     # only use this function if we want to change the substrate graphs
@@ -172,14 +175,14 @@ class DQN:
         # the rnd vnr must be a json object which is passed to reset
         rnd_vnr = self.get_rnd_vnr()
         initial = True
-        self.steps_done = 0 
         # high level state is given by the environement as [sub_1_data_obj, sub_2_data_obj, sub_3_data_obj, vnr_data_obj]
         # but while passing to the model, we need oto give it as ([sub_1_data_obj, sub_2_data_obj, sub_3_data_obj] , vnr_data_obj)
         state_high = self.env.reset(rnd_vnr)
         vnr = None
         self.time_sim.reset()
         arr_t = self.time_sim.ret_arr_time()
-        self.rew_buffer = deque([0.0], maxlen=10000)
+        self.low_dqn.set_vals()
+        
         cnt_ = 1
         prev_option = None
         self.embedded_vnr_mappings = []
@@ -192,9 +195,6 @@ class DQN:
         revenues_ = [0, 0, 0]
         costs_ = [0, 0, 0]
         ######################
-
-        self.low_dqn.set_low_params()
-
         for step in count():
 
             if step >= self.max_time_steps_per_episode:
@@ -202,96 +202,98 @@ class DQN:
 
             revenues_ , costs_ =  self.release_embeddings(step, revenues_, costs_)
 
-            if step >= arr_t:
-                if initial == True:
-                    vnr = rnd_vnr
-                    initial = False
-                
-                n_vnrs_generated += 1
-                revenue = 0
-                cost = 0
-                rev_cost_ratio_ = None
+            # if step >= arr_t:
+            if initial == True:
+                vnr = rnd_vnr
+                initial = False
+            
+            n_vnrs_generated += 1
+            revenue = 0
+            cost = 0
+            rev_cost_ratio_ = None
 
-                high_option_tensor = self.select_action(state_high[:-1], state_high[-1])
-                # print(high_option_tensor)
-                high_option = high_option_tensor.detach().item()
+            high_option_tensor = self.select_action(state_high[:-1], state_high[-1])
+            # print(high_option_tensor)
+            high_option = high_option_tensor.detach().item()
 
-                sub = self.env.choose_option(high_option)
+            sub = self.env.choose_option(high_option)
 
-                prev_vnr = copy.deepcopy(vnr)
-                if prev_option == high_option:
-                    cnt_ += 1
+            prev_vnr = copy.deepcopy(vnr)
+            if prev_option == high_option:
+                cnt_ += 1
+            else:
+                cnt_ = 1
+            prev_option = copy.copy(high_option)
+            
+            # the low level agent is used by the high level agent here
+            node_embedded, node_mappings, cumulative_reward = self.low_dqn.low_loop(sub, high_option, vnr, map_skel=copy.deepcopy(self.map_skel), step_= step)
+            
+            ######################## from here to be continued
+
+            link_embedded = False
+            all_mappings = None
+
+            if node_embedded:
+                link_embedded, all_mappings = self.env.embed_link(sub, high_option, node_mappings, vnr)
+                if link_embedded:
+                    sub = self.env.change_sub(sub, all_mappings)
+                    dep_t = self.time_sim.ret_dep_time()
+                    self.embedded_vnr_mappings.append((dep_t, all_mappings))
+                    self.embedded_vnr_mappings.sort(key = lambda i : i[0])
+                    n_vnrs_embedded += 1
+
+                    ##########################
+                    # for the revenue and cost calculation
+                    for cpu_mem in all_mappings['cpu_mem']:
+                        revenue = cpu_mem[0] + cpu_mem[1]
+                    cost = copy.deepcopy(revenue)
+                    for u in range(len(all_mappings['paths'])):
+                        revenue += all_mappings['bw'][u]
+                        cost += (all_mappings['bw'][u] * (len(all_mappings['paths'][u]) - 1))
+                    revenues_[all_mappings['sub']] += revenue
+                    costs_[all_mappings['sub']] += cost
+                    ###################################
                 else:
-                    cnt_ = 1
-                prev_option = copy.copy(high_option)
-                
-                # the low level agent is used by the high level agent here
-                node_embedded, node_mappings, cumulative_reward = self.low_dqn.low_loop(sub, high_option, vnr, map_skel=copy.deepcopy(self.map_skel), step_= step)
-                
-                ######################## from here to be continued
+                    not_embed_count += 1
+            else:
+                not_embed_count += 1
 
-                link_embedded = False
-                all_mappings = None
+            # if revenue != 0 and cost != 0:
+            #     rev_cost_ratio_ = revenue / cost
+            
+            vnr = self.get_rnd_vnr()
+            # the state is [s1_data_obj, s2_data_obj, s3_data_obj, vnr_data_obj]
+            ##############################################
+            next_state_high, reward_high, done_high = self.env.step(high_option, sub=sub, vnr=vnr, link_embed=link_embedded, 
+                                                                    mapp=all_mappings, prev_vnr=prev_vnr, curr_time_step=step,
+                                                                    cum_rew=cumulative_reward, cnt_=cnt_, not_embed_cnt=not_embed_count)
+            ###############################################
+            
+            if done_high:
+                next_state_high = None
+            
+            reward_high += cumulative_reward
+            reward_high_tensor = torch.tensor([reward_high], device=device)
 
-                if node_embedded:
-                    link_embedded, all_mappings = self.env.embed_link(sub, high_option, node_mappings, vnr)
-                    if link_embedded:
-                        sub = self.env.change_sub(sub, all_mappings)
-                        dep_t = self.time_sim.ret_dep_time()
-                        self.embedded_vnr_mappings.append((dep_t, all_mappings))
-                        self.embedded_vnr_mappings.sort(key = lambda i : i[0])
-                        n_vnrs_embedded += 1
+            self.memory.push(state_high, high_option_tensor, next_state_high, reward_high_tensor)
+            self.rew_buffer.append(reward_high)
 
-                        ##########################
-                        # for the revenue and cost calculation
-                        for cpu_mem in all_mappings['cpu_mem']:
-                            revenue = cpu_mem[0] + cpu_mem[1]
-                        cost = copy.deepcopy(revenue)
-                        for u in range(len(all_mappings['paths'])):
-                            revenue += all_mappings['bw'][u]
-                            cost += (all_mappings['bw'][u] * (len(all_mappings['paths'][u]) - 1))
-                        revenues_[all_mappings['sub']] += revenue
-                        costs_[all_mappings['sub']] += cost
-                        ###################################
-                    else:
-                        not_embed_count += 1
+            state_high = next_state_high
+            self.optimize_model()
 
-                if revenue != 0 and cost != 0:
-                    rev_cost_ratio_ = revenue / cost
-                
-                vnr = self.get_rnd_vnr()
-                # the state is [s1_data_obj, s2_data_obj, s3_data_obj, vnr_data_obj]
-                ##############################################
-                next_state_high, reward_high, done_high = self.env.step(high_option, sub=sub, vnr=vnr, link_embed=link_embedded, 
-                                                                        mapp=all_mappings, prev_vnr=prev_vnr, curr_time_step=step,
-                                                                        cum_rew=cumulative_reward, cnt_=cnt_, not_embed_cnt=not_embed_count)
-                ###############################################
-                
-                if done_high:
-                    next_state_high = None
-                
-                reward_high += cumulative_reward
-                reward_high_tensor = torch.tensor([reward_high], device=device)
+            if done_high:
+                print(n_vnrs_embedded)
 
-                self.memory.push(state_high, high_option_tensor, next_state_high, reward_high_tensor)
-                self.rew_buffer.append(reward_high)
-
-                state_high = next_state_high
-                self.optimize_model()
-
-                if done_high:
-                    # print(n_vnrs_embedded)
-
-                    tot_rev_ratio = np.mean([0 if c == 0 else r / c for r, c in zip(revenues_, costs_)])
-                            
-                    node_util, link_util = self.env.get_utilization()
-                    avg_node_util = np.mean(node_util, axis=1)
-                    avg_link_util = [mean(util) for util in link_util]
-                    wandb.log({'acceptance_rate': (n_vnrs_embedded/n_vnrs_generated), 'reward': np.mean(self.rew_buffer), 'avg_rev_cost_ratio' : tot_rev_ratio, 'avg_node_util_1' : avg_node_util[0], 'avg_node_util_2' : avg_node_util[1], 'avg_node_util_3' : avg_node_util[2], 'avg_link_util_1' : avg_link_util[0], 'avg_link_util_2' : avg_link_util[1],
-                                'avg_link_util_3' : avg_link_util[2],})
-                    break
-                
-                arr_t = self.time_sim.ret_arr_time()
+                tot_rev_ratio = np.mean([0 if c == 0 else r / c for r, c in zip(revenues_, costs_)])
+                        
+                node_util, link_util = self.env.get_utilization()
+                avg_node_util = np.mean(node_util, axis=1)
+                avg_link_util = [mean(util) for util in link_util]
+                wandb.log({'acceptance_rate': (n_vnrs_embedded/n_vnrs_generated), 'reward': np.mean(self.rew_buffer), 'avg_rev_cost_ratio' : tot_rev_ratio, 'avg_node_util_1' : avg_node_util[0], 'avg_node_util_2' : avg_node_util[1], 'avg_node_util_3' : avg_node_util[2], 'avg_link_util_1' : avg_link_util[0], 'avg_link_util_2' : avg_link_util[1],
+                            'avg_link_util_3' : avg_link_util[2],})
+                break
+            
+            arr_t = self.time_sim.ret_arr_time()
         return mean(self.rew_buffer)
         
         # save both the trained models
@@ -299,17 +301,17 @@ class DQN:
     def save_models(self):
         torch.save(self.policy_net.state_dict(), 'models/high_agent.pth')
         torch.save(self.low_dqn.policy_net.state_dict(), 'models/low_agent.pth')
-
-    def set_low_params(self):
-        self.steps_done = 0 
-        self.rew_buffer = deque([0.0], maxlen=10000)
+    
+    def set_vals(self):
+        self.steps_done = 0
 
 
     def low_loop(self, sub_, high_opt, vnr_, map_skel=None, step_=None):
         state_low = self.env.reset(sub=sub_, sub_ind=high_opt, vnr=vnr_, map_skel=map_skel)
         node_embedded = False
         prev_low_actions = []
-        embed_cnt = 0
+        embed_cnt = 0 
+        # self.steps_done = 0
 
         for x in range(len(vnr_['nodes'])):
             low_action = None

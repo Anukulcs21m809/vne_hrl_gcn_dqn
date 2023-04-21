@@ -97,8 +97,8 @@ class High_level_env:
         r_h_l = cum_rew / len(vnr['nodes'])
 
         final_rew = ((r_h_e * r_h_u * r_h_rc) + r_h_l) * r_c
-        # print(final_rew)
-        # print(link_embedded)
+        print(final_rew)
+        print(link_embedded)
         return final_rew 
         
                 
