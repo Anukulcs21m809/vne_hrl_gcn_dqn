@@ -440,7 +440,7 @@ class DQN:
             target_net_state_dict[key] = policy_net_state_dict[key]* self.tau + target_net_state_dict[key]*(1 - self.tau)
         self.target_net.load_state_dict(target_net_state_dict)
 
-def evaluate(arr_rate, depart_time, resource_size):
+def evaluate(arr_rate, depart_time, resource_size, test_=None):
     dqn = DQN(mu=arr_rate, value_for_vnr=resource_size, depart_time=depart_time)
     low_dqn = DQN(high_agent = 0)
     dqn.set_low_dqn(low_dqn)
@@ -451,6 +451,7 @@ def evaluate(arr_rate, depart_time, resource_size):
     # print('cumulative revenue : ', np.mean(cum_rev))
     # print('\n')
     f = open('result_text_files/results_dqn.txt', 'a')
+    f.write('test:{}'.format(test_) + '\n')
     f.write(str('algo:{}'.format('dqn')) + '\n')
     f.write(str(arr_rate) + '\n')
     f.write(str(depart_time) + '\n')
@@ -461,6 +462,7 @@ def evaluate(arr_rate, depart_time, resource_size):
     f.close()
 
     f = open('result_text_files/util_results_dqn.txt', 'a')
+    f.write('test:{}'.format(test_) + '\n')
     f.write(str('algo:{}'.format('dqn')) + '\n')
     f.write(str(arr_rate) + '\n')
     f.write(str(depart_time) + '\n')
@@ -553,7 +555,7 @@ def evaluate(arr_rate, depart_time, resource_size):
                 cum_rev += revenue
                 ###################################
             arr_t = time_sim.ret_arr_time()
-            x_.append(x)
+            # x_.append(x)
             utils_.append(greed.return_util())
             
             tot_rev_ratio = np.mean([0 if c == 0 else r / c for r, c in zip(revenues_, costs_)])
@@ -567,6 +569,7 @@ def evaluate(arr_rate, depart_time, resource_size):
     # print('cumulative revenue : ', np.mean(cum_rev_))
     # print('\n')
     f = open('result_text_files/results_greedy.txt', 'a')
+    f.write('test:{}'.format(test_) + '\n')
     f.write(str('algo:{}'.format('greedy')) + '\n')
     f.write(str(arr_rate) + '\n')
     f.write(str(depart_time) + '\n')
@@ -577,6 +580,7 @@ def evaluate(arr_rate, depart_time, resource_size):
     f.close()
 
     f = open('result_text_files/util_results_greedy.txt', 'a')
+    f.write('test:{}'.format(test_) + '\n')
     f.write(str('algo:{}'.format('greedy')) + '\n')
     f.write(str(arr_rate) + '\n')
     f.write(str(depart_time) + '\n')
@@ -605,11 +609,14 @@ for value in values:
     for val in value:    
         if i == 0:
             arr_r = val
+            test = 'arr_rate'
         elif i == 1:
             dep_t = val
+            test = 'dept_time'
         else:
             res_size = val
-        evaluate(arr_r, dep_t, res_size)
+            test = 'vnr_size'
+        evaluate(arr_r, dep_t, res_size, test_=test)
     i += 1
 
 

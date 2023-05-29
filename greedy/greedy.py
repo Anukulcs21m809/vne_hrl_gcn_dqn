@@ -13,7 +13,7 @@ sys.path.insert(2, '../helpers')
 from helpers.graph_gen import GraphGen
 from helpers.utilities_ import Time_Sim
 
-file_ =  pd.read_csv('data/sub_graphs_original.csv')
+file_ =  pd.read_csv('models/model_to_eval_first/sub_graphs_used.csv')
 
 class Greedy_Selector:
     def __init__(self) -> None:
