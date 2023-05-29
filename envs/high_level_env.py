@@ -10,18 +10,19 @@ from networkx.algorithms import shortest_paths
 import math
 import numpy as np
 import os
+import networkx as nx
 
 sys.path.insert(1, "../helpers")
 # sys.path.insert(2, "../data")
 from helpers.data_feature_gen import Featurizer
 
 class High_level_env:
-    def __init__(self, sub_graphs=None, max_running_time=None, max_not_embed_cnt=None): #,max_vnr_nodes=None, vnr_in_ftr=None, sub_in_ftr=None) -> None:
+    def __init__(self, sub_graphs=None, max_running_time=None, max_generated_cnt=None): #,max_vnr_nodes=None, vnr_in_ftr=None, sub_in_ftr=None) -> None:
         
         # this will always store the original state of the substrate graphs
         self.sub_graphs = sub_graphs
         self.max_running_time = max_running_time
-        self.max_not_embed_cnt = max_not_embed_cnt
+        self.max_generated_cnt = max_generated_cnt
 
         # these sub graphs have to be instantiated at the DQN file
         # df = pd.read_csv('../data/sub_graphs_original.csv').reset_index()
@@ -66,16 +67,22 @@ class High_level_env:
 
 
     def get_reward(self, link_embedded, mapp, vnr, option, cum_rew, cnt):
-        r_h_e = 100 if link_embedded else -100
+
+        r_h_e = 10 if link_embedded else -10
         if mapp == None or len(mapp['link_ind']) < 1:
             r_h_u = 1
+            GED = 20
         else:
+            nx_obj_sub = json_graph.node_link_graph(self.current_sub_state[option])
+            nx_obj_vnr = json_graph.node_link_graph(vnr)
+            graph_sub_nx = nx_obj_sub.subgraph(list(set([y for x in mapp['paths'] for y in x])))
+            GED = nx.graph_edit_distance(nx_obj_vnr, graph_sub_nx)
             r_h_u = 0
-            for link in mapp['link_ind']:
+            for i, link in enumerate(mapp['link_ind']):
                 avg_resource = 0
                 for ind_ in link:
                     sub_link = self.current_sub_state[option]['links'][ind_]
-                    avg_resource += (sub_link['bw']/ sub_link['band_max'])
+                    avg_resource += ((sub_link['bw'] + mapp['bw'][i]) / sub_link['band_max'])
                 r_h_u += (avg_resource / len(link))
             r_h_u /= len(mapp['link_ind'])
         
@@ -94,24 +101,24 @@ class High_level_env:
             r_h_rc = (rev_change / cost_change)
         
         r_c = 1 / (math.pow((cnt - 1), 2) + 1)
-        r_h_l = cum_rew / len(vnr['nodes'])
+        r_h_l = cum_rew #/ len(vnr['nodes'])
 
-        final_rew = ((r_h_e * r_h_u * r_h_rc) + r_h_l) * r_c
-        print(final_rew)
-        print(link_embedded)
+        final_rew = ((r_h_e * r_h_u * r_h_rc) + r_h_l * (1/ (GED + 1))) * r_c 
+        # print(final_rew)
+        # print(link_embedded)
         return final_rew 
         
                 
     #############################################################
     
-    def step(self, option, sub=None, vnr=None, link_embed=None, mapp=None, prev_vnr=None, curr_time_step=None, cum_rew=None, cnt_=None, not_embed_cnt=None): #not_embed_count=None):
+    def step(self, option, sub=None, vnr=None, link_embed=None, mapp=None, prev_vnr=None, curr_time_step=None, cum_rew=None, cnt_=None, generated_cnt=None): #not_embed_count=None):
         
         reward = self.get_reward(link_embed, mapp, prev_vnr, option, cum_rew, cnt_)
         
         # replace the substrate that has been changed by the low agent
         self.current_sub_state[option] = sub
         # done = True if curr_time_step > self.max_running_time else False
-        done = True if not_embed_cnt > self.max_not_embed_cnt else False
+        done = True if generated_cnt > self.max_generated_cnt else False
         next_state = self.encode_graphs(vnr)
         
         return next_state, reward, done
@@ -206,3 +213,5 @@ class High_level_env:
                     sub['links'][y]['bw'] += resource['bw'][x]
             
             self.current_sub_state[sub_ind] = sub
+
+

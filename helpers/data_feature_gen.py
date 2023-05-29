@@ -20,16 +20,16 @@ class Featurizer:
 
     @staticmethod
     def featurize_sub_node(G, node_idx):
-        cpu = G['nodes'][node_idx]['cpu'] / G['nodes'][node_idx]['cpu_max']
-        mem = G['nodes'][node_idx]['mem'] / G['nodes'][node_idx]['mem_max']
-        cpu_util = 1 - cpu
-        mem_util = 1 - mem
+        cpu = G['nodes'][node_idx]['cpu'] 
+        mem = G['nodes'][node_idx]['mem'] 
+        cpu_util = 1 - (cpu / G['nodes'][node_idx]['cpu_max'])
+        mem_util = 1 - (mem / G['nodes'][node_idx]['mem_max'])
         avg_rem_band = 0
         avg_util_band = 0
         i = 0
         for link in G['links']:
             if node_idx == link['target'] or node_idx == link['source']:
-                avg_rem_band += (link['bw'] / link['band_max'])
+                avg_rem_band += link['bw']
                 avg_util_band += (1 - (link['bw'] / link['band_max']))
                 i += 1
         avg_rem_band = avg_rem_band / i if i > 0 else avg_rem_band
@@ -40,13 +40,13 @@ class Featurizer:
     # all these max values are from the resource range that we have specified earlier for the vnr 
     @staticmethod
     def featurize_vnr_node(G, node_idx):
-        cpu = G['nodes'][node_idx]['cpu'] / G['cpu_max']
-        mem = G['nodes'][node_idx]['mem'] / G['mem_max']
+        cpu = G['nodes'][node_idx]['cpu']
+        mem = G['nodes'][node_idx]['mem']
         i = 0
         avg_band = 0
         for link in G['links']:
             if node_idx == link['target'] or node_idx == link['source']:
-                avg_band += (link['bw'] / G['band_max'])
+                avg_band += link['bw']
                 i += 1
         avg_band = avg_band / i if i > 0 else avg_band
 

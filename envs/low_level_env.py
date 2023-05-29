@@ -34,7 +34,7 @@ class Low_level_env:
 
     def get_reward(self, embeddable, sub_node, sub_gr_ind=None, ind_vnr_=None):
         mult = 1 if embeddable else -1
-        r_l_e = mult * 100 * (1 / (ind_vnr_ + 1))
+        r_l_e = mult * 10 * (1 / (ind_vnr_ + 1))
         r_l_u = (sub_node['cpu'] + sub_node['mem']) / (sub_node['cpu_max'] + sub_node['mem_max'])
         final_rew = r_l_e * r_l_u * (1 / (self.repeat_matrix[sub_gr_ind][ind_vnr_] + 1))
         return final_rew
@@ -81,12 +81,13 @@ class Low_level_env:
                 self.repeat_matrix[self.curr_map['sub']][action] += 1
                 #################################
         
-        # this is done to obtain a new state if the embedding has taken place
-        # otherwise it returns the same old state
-        temp_sub = self.temp_sub_change()
         ######################################
         reward = self.get_reward(embeddable, sub_node, sub_gr_ind=self.curr_map['sub'], ind_vnr_= ind_vnr)
         ###################################
+        # this is done to obtain a new state if the embedding has taken place
+        # otherwise it returns the same old state
+        temp_sub = self.temp_sub_change()
+
         self.cum_reward += reward
         done = True if ind_vnr == (len(self.curr_vnr['nodes']) - 1) else False
         if not done:

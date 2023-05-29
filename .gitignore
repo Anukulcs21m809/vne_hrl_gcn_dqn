@@ -7,3 +7,7 @@ sub_graphs_original.csv
 .gitignore
 high_agent.pth
 low_agent.pth
+wandb
+models
+test_images
+result.png

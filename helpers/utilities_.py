@@ -22,21 +22,23 @@ class ReplayMemory(object):
 import numpy as np
 
 class Time_Sim:
-    def __init__(self) -> None:
-        self.MU = 5 # mean arrival rate
-        self.TAU = 0.1
+    def __init__(self, mu=0.2, dep_t=600) -> None:
+        self.MU = mu # mean arrival rate
+        # self.TAU = 0.1
         self.arrival_time = 0
+        self.dep_t = dep_t
     
     def ret_arr_time(self):
         u = np.random.uniform()
         self.arrival_time = self.arrival_time + (-np.log(1-u) / self.MU)
-        arr_t = int(self.arrival_time * 10)
+        arr_t = self.arrival_time
         return arr_t
 
     def ret_dep_time(self):
-        u = np.random.uniform()
-        dep_time = self.arrival_time + (-np.log(1-u) / self.TAU)
-        dep_t = int(dep_time * 10)
+        # u = np.random.uniform()
+        # dep_time = self.arrival_time + (-np.log(1-u) / self.TAU)
+        # dep_t = int(dep_time * 10)
+        dep_t = self.arrival_time + random.randint(400, self.dep_t)
         return dep_t
     
     def reset(self):
