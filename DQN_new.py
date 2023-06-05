@@ -74,7 +74,7 @@ class DQN:
         # no of nodes, CPU cores, memory in GB, bandwidth in Mbps
         values_for_vnrs = [
             [3, 6],
-            [2, 4],
+            [8, 16],
             [2,4,8],
             [32, 48]
         ]
